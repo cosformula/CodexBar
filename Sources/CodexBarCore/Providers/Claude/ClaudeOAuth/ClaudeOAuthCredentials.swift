@@ -297,11 +297,12 @@ public enum ClaudeOAuthCredentialsStore {
                 && (!respectKeychainPromptCooldown || ClaudeOAuthKeychainAccessGate.shouldAllowPrompt())
         if promptAllowed {
             do {
+                self.claudeKeychainPromptLock.lock()
+                defer { self.claudeKeychainPromptLock.unlock() }
+
                 // Some macOS configurations still show the system keychain prompt even for our "silent" probes.
                 // Only show the in-app pre-alert when we have evidence that Keychain interaction is likely.
                 if self.shouldShowClaudeKeychainPreAlert() {
-                    self.claudeKeychainPromptLock.lock()
-                    defer { self.claudeKeychainPromptLock.unlock() }
                     KeychainPromptHandler.handler?(
                         KeychainPromptContext(
                             kind: .claudeOAuth,
