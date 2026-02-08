@@ -414,15 +414,17 @@ struct ClaudeOAuthCredentialsStoreTests {
                     createdAt: 1,
                     persistentRefHash: "ref1")
 
-                let first = try ClaudeOAuthCredentialsStore.withClaudeKeychainFingerprintStoreOverrideForTesting(
-                    fingerprintStore)
-                {
-                    try ClaudeOAuthKeychainAccessGate.withShouldAllowPromptOverrideForTesting(true) {
-                        try ClaudeOAuthCredentialsStore.withClaudeKeychainOverridesForTesting(
-                            data: cachedData,
-                            fingerprint: fingerprint1)
-                        {
-                            try ClaudeOAuthCredentialsStore.load(environment: [:], allowKeychainPrompt: false)
+                let first = try ProviderInteractionContext.$current.withValue(.userInitiated) {
+                    try ClaudeOAuthCredentialsStore.withClaudeKeychainFingerprintStoreOverrideForTesting(
+                        fingerprintStore)
+                    {
+                        try ClaudeOAuthKeychainAccessGate.withShouldAllowPromptOverrideForTesting(true) {
+                            try ClaudeOAuthCredentialsStore.withClaudeKeychainOverridesForTesting(
+                                data: cachedData,
+                                fingerprint: fingerprint1)
+                            {
+                                try ClaudeOAuthCredentialsStore.load(environment: [:], allowKeychainPrompt: false)
+                            }
                         }
                     }
                 }
@@ -440,15 +442,17 @@ struct ClaudeOAuthCredentialsStoreTests {
                     accessToken: "keychain-token",
                     expiresAt: Date(timeIntervalSinceNow: 3600))
 
-                let second = try ClaudeOAuthCredentialsStore.withClaudeKeychainFingerprintStoreOverrideForTesting(
-                    fingerprintStore)
-                {
-                    try ClaudeOAuthKeychainAccessGate.withShouldAllowPromptOverrideForTesting(true) {
-                        try ClaudeOAuthCredentialsStore.withClaudeKeychainOverridesForTesting(
-                            data: keychainData,
-                            fingerprint: fingerprint2)
-                        {
-                            try ClaudeOAuthCredentialsStore.load(environment: [:], allowKeychainPrompt: false)
+                let second = try ProviderInteractionContext.$current.withValue(.userInitiated) {
+                    try ClaudeOAuthCredentialsStore.withClaudeKeychainFingerprintStoreOverrideForTesting(
+                        fingerprintStore)
+                    {
+                        try ClaudeOAuthKeychainAccessGate.withShouldAllowPromptOverrideForTesting(true) {
+                            try ClaudeOAuthCredentialsStore.withClaudeKeychainOverridesForTesting(
+                                data: keychainData,
+                                fingerprint: fingerprint2)
+                            {
+                                try ClaudeOAuthCredentialsStore.load(environment: [:], allowKeychainPrompt: false)
+                            }
                         }
                     }
                 }

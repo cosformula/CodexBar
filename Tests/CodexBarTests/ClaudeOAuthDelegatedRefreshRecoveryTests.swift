@@ -134,7 +134,8 @@ struct ClaudeOAuthDelegatedRefreshRecoveryTests {
                     }
                 }
 
-                #expect(await delegatedCounter.current() == 1)
+                // If Claude keychain already contains fresh credentials, we should recover without needing a CLI touch.
+                #expect(await delegatedCounter.current() == 0)
                 #expect(await tokenCapture.get() == "fresh-token")
                 #expect(snapshot.primary.usedPercent == 7)
                 #expect(snapshot.secondary?.usedPercent == 21)

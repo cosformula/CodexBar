@@ -344,9 +344,10 @@ public enum ClaudeOAuthCredentialsStore {
            Date().timeIntervalSince(timestamp) < self.memoryCacheValidityDuration,
            !cachedRecord.credentials.isExpired
         {
-            if let synced = self.syncWithClaudeKeychainIfChanged(
-                cached: cachedRecord,
-                respectKeychainPromptCooldown: shouldRespectKeychainPromptCooldownForSilentProbes)
+            if self.shouldAttemptFreshnessSyncFromClaudeKeychain(cached: cachedRecord),
+               let synced = self.syncWithClaudeKeychainIfChanged(
+                   cached: cachedRecord,
+                   respectKeychainPromptCooldown: shouldRespectKeychainPromptCooldownForSilentProbes)
             {
                 return synced
             }
@@ -375,9 +376,10 @@ public enum ClaudeOAuthCredentialsStore {
                 if creds.isExpired {
                     expiredRecord = record
                 } else {
-                    if let synced = self.syncWithClaudeKeychainIfChanged(
-                        cached: record,
-                        respectKeychainPromptCooldown: shouldRespectKeychainPromptCooldownForSilentProbes)
+                    if self.shouldAttemptFreshnessSyncFromClaudeKeychain(cached: record),
+                       let synced = self.syncWithClaudeKeychainIfChanged(
+                           cached: record,
+                           respectKeychainPromptCooldown: shouldRespectKeychainPromptCooldownForSilentProbes)
                     {
                         return synced
                     }
@@ -426,6 +428,14 @@ public enum ClaudeOAuthCredentialsStore {
             }
         } catch {
             lastError = error
+        }
+
+        // 3.5 Try Claude keychain without prompting (repair path; may still show UI on some systems)
+        if let repaired = self.repairFromClaudeKeychainWithoutPromptIfAllowed(
+            now: Date(),
+            respectKeychainPromptCooldown: shouldRespectKeychainPromptCooldownForSilentProbes)
+        {
+            return repaired
         }
 
         // 4. Fall back to Claude's keychain (may prompt user if allowed)
@@ -819,6 +829,83 @@ public enum ClaudeOAuthCredentialsStore {
         _ = cached
         _ = respectKeychainPromptCooldown
         _ = now
+        return nil
+        #endif
+    }
+
+    private static func shouldAttemptFreshnessSyncFromClaudeKeychain(cached: ClaudeOAuthCredentialRecord) -> Bool {
+        guard !cached.credentials.isExpired else { return false }
+        guard cached.owner == .claudeCLI else { return false }
+        guard self.keychainAccessAllowed else { return false }
+
+        let mode = ClaudeOAuthKeychainPromptPreference.current()
+        switch mode {
+        case .never:
+            return false
+        case .onlyOnUserAction:
+            return ProviderInteractionContext.current == .userInitiated
+        case .always:
+            return true
+        }
+    }
+
+    private static func repairFromClaudeKeychainWithoutPromptIfAllowed(
+        now: Date,
+        respectKeychainPromptCooldown: Bool) -> ClaudeOAuthCredentialRecord?
+    {
+        #if os(macOS)
+        if !self.keychainAccessAllowed { return nil }
+
+        // If Keychain preflight indicates interaction is likely, skip the silent repair read.
+        // Why: non-interactive probes can still show UI on some systems, and if interaction is required we should
+        // let the interactive prompt path handle it (when allowed).
+        if self.shouldShowClaudeKeychainPreAlert() {
+            return nil
+        }
+
+        if respectKeychainPromptCooldown,
+           ProviderInteractionContext.current != .userInitiated,
+           !ClaudeOAuthKeychainAccessGate.shouldAllowPrompt(now: now)
+        {
+            return nil
+        }
+
+        do {
+            guard let data = try self.loadFromClaudeKeychainNonInteractive(), !data.isEmpty else { return nil }
+            guard let creds = try? ClaudeOAuthCredentials.parse(data: data), !creds.isExpired else {
+                // Fingerprint so we don't repeatedly hammer a broken keychain item.
+                self.saveClaudeKeychainFingerprint(self.currentClaudeKeychainFingerprintWithoutPrompt())
+                return nil
+            }
+
+            self.saveClaudeKeychainFingerprint(self.currentClaudeKeychainFingerprintWithoutPrompt())
+            self.writeMemoryCache(
+                record: ClaudeOAuthCredentialRecord(credentials: creds, owner: .claudeCLI, source: .memoryCache),
+                timestamp: now)
+            self.saveToCacheKeychain(data, owner: .claudeCLI)
+
+            self.log.info(
+                "Claude keychain credentials loaded without prompt; syncing OAuth cache",
+                metadata: [
+                    "interaction": ProviderInteractionContext.current == .userInitiated ? "user" : "background",
+                ])
+            return ClaudeOAuthCredentialRecord(credentials: creds, owner: .claudeCLI, source: .claudeKeychain)
+        } catch let error as ClaudeOAuthCredentialsError {
+            if case let .keychainError(status) = error,
+               status == Int(errSecUserCanceled)
+               || status == Int(errSecAuthFailed)
+               || status == Int(errSecInteractionNotAllowed)
+               || status == Int(errSecNoAccessForItem)
+            {
+                ClaudeOAuthKeychainAccessGate.recordDenied(now: now)
+            }
+            return nil
+        } catch {
+            return nil
+        }
+        #else
+        _ = now
+        _ = respectKeychainPromptCooldown
         return nil
         #endif
     }
