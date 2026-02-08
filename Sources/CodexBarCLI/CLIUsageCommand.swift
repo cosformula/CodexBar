@@ -138,11 +138,13 @@ extension CodexBarCLI {
 
         for p in providerList {
             let status = includeStatus ? await Self.fetchStatus(for: p) : nil
-            let output = await Self.fetchUsageOutputs(
-                provider: p,
-                status: status,
-                tokenContext: tokenContext,
-                command: command)
+            let output = await ProviderInteractionContext.$current.withValue(.userInitiated) {
+                await Self.fetchUsageOutputs(
+                    provider: p,
+                    status: status,
+                    tokenContext: tokenContext,
+                    command: command)
+            }
             if output.exitCode != .success {
                 exitCode = output.exitCode
             }

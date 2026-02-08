@@ -297,19 +297,40 @@ public struct ClaudeUsageFetcher: ClaudeUsageFetching, Sendable {
 
     private func loadViaOAuth(allowDelegatedRetry: Bool) async throws -> ClaudeUsageSnapshot {
         do {
+            let promptMode = ClaudeOAuthKeychainPromptPreference.current()
+            let interaction = ProviderInteractionContext.current
+            let canPromptNow: Bool = switch promptMode {
+            case .never:
+                false
+            case .onlyOnUserAction:
+                interaction == .userInitiated
+            case .always:
+                true
+            }
+
+            // Respect the Keychain prompt cooldown for background operations to avoid spamming system dialogs.
+            // User actions (menu open / refresh / settings) are allowed to bypass the cooldown.
+            let shouldRespectKeychainPromptCooldown = interaction != .userInitiated
+
             // Allow keychain prompt when no cached credentials exist (bootstrap case)
             let hasCache = ClaudeOAuthCredentialsStore.hasCachedCredentials(environment: self.environment)
-            let promptGateAllowsPrompt = ClaudeOAuthKeychainAccessGate.shouldAllowPrompt()
-            let allowKeychainPrompt =
-                !hasCache
-                    && (!self.oauthKeychainPromptCooldownEnabled || promptGateAllowsPrompt)
+            let allowKeychainPrompt = canPromptNow && !hasCache
+            if allowKeychainPrompt {
+                Self.log.info(
+                    "Claude OAuth keychain prompt allowed (bootstrap)",
+                    metadata: [
+                        "interaction": interaction == .userInitiated ? "user" : "background",
+                        "promptMode": promptMode.rawValue,
+                        "hasCache": "\(hasCache)",
+                    ])
+            }
             // Ownership-aware credential loading:
             // - Claude CLI-owned credentials delegate refresh to Claude CLI.
             // - CodexBar-owned credentials use direct token-endpoint refresh.
             let creds = try await Self.loadOAuthCredentials(
                 environment: self.environment,
                 allowKeychainPrompt: allowKeychainPrompt,
-                respectKeychainPromptCooldown: self.oauthKeychainPromptCooldownEnabled)
+                respectKeychainPromptCooldown: shouldRespectKeychainPromptCooldown)
             // The usage endpoint requires user:profile scope.
             if !creds.scopes.contains("user:profile") {
                 throw ClaudeUsageError.oauthFailed(
@@ -369,7 +390,29 @@ public struct ClaudeUsageFetcher: ClaudeUsageFetching, Sendable {
                         return ClaudeOAuthCredentialsStore.syncFromClaudeKeychainWithoutPrompt(now: Date())
                     }()
 
-                    let retryAllowKeychainPrompt = !self.oauthKeychainPromptCooldownEnabled && !didSyncSilently
+                    let promptMode = ClaudeOAuthKeychainPromptPreference.current()
+                    let interaction = ProviderInteractionContext.current
+                    let canPromptNow: Bool = switch promptMode {
+                    case .never:
+                        false
+                    case .onlyOnUserAction:
+                        interaction == .userInitiated
+                    case .always:
+                        true
+                    }
+                    let shouldRespectKeychainPromptCooldown = interaction != .userInitiated
+
+                    let retryAllowKeychainPrompt = canPromptNow && !didSyncSilently
+                    if retryAllowKeychainPrompt {
+                        Self.log.info(
+                            "Claude OAuth keychain prompt allowed (post-delegation retry)",
+                            metadata: [
+                                "interaction": interaction == .userInitiated ? "user" : "background",
+                                "promptMode": promptMode.rawValue,
+                                "delegatedOutcome": Self.delegatedRefreshOutcomeLabel(delegatedOutcome),
+                                "didSyncSilently": "\(didSyncSilently)",
+                            ])
+                    }
                     if Self.isClaudeOAuthFlowDebugEnabled {
                         Self.log.debug(
                             "Claude OAuth credential load (post-delegation retry start)",
@@ -378,12 +421,14 @@ public struct ClaudeUsageFetcher: ClaudeUsageFetching, Sendable {
                                 "didSyncSilently": "\(didSyncSilently)",
                                 "allowKeychainPrompt": "\(retryAllowKeychainPrompt)",
                                 "delegatedOutcome": Self.delegatedRefreshOutcomeLabel(delegatedOutcome),
+                                "interaction": interaction == .userInitiated ? "user" : "background",
+                                "promptMode": promptMode.rawValue,
                             ])
                     }
                     let refreshedCreds = try await Self.loadOAuthCredentials(
                         environment: self.environment,
                         allowKeychainPrompt: retryAllowKeychainPrompt,
-                        respectKeychainPromptCooldown: self.oauthKeychainPromptCooldownEnabled)
+                        respectKeychainPromptCooldown: shouldRespectKeychainPromptCooldown)
                     if Self.isClaudeOAuthFlowDebugEnabled {
                         Self.log.debug(
                             "Claude OAuth credential load (post-delegation retry)",
@@ -392,6 +437,8 @@ public struct ClaudeUsageFetcher: ClaudeUsageFetching, Sendable {
                                 "didSyncSilently": "\(didSyncSilently)",
                                 "allowKeychainPrompt": "\(retryAllowKeychainPrompt)",
                                 "delegatedOutcome": Self.delegatedRefreshOutcomeLabel(delegatedOutcome),
+                                "interaction": interaction == .userInitiated ? "user" : "background",
+                                "promptMode": promptMode.rawValue,
                             ])
                     }
 
