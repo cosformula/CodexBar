@@ -4,7 +4,7 @@ import Testing
 @testable import CodexBar
 
 @MainActor
-@Suite
+@Suite(.serialized)
 struct StatusMenuTests {
     private func disableMenuCardsForTesting() {
         StatusItemController.menuCardRenderingEnabled = false
@@ -21,7 +21,9 @@ struct StatusMenuTests {
 
     private func makeSettings() -> SettingsStore {
         let suite = "StatusMenuTests-\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suite)!
+        guard let defaults = UserDefaults(suiteName: suite) else {
+            fatalError("Failed to create UserDefaults suite '\(suite)'")
+        }
         defaults.removePersistentDomain(forName: suite)
         let configStore = testConfigStore(suiteName: suite)
         return SettingsStore(
@@ -73,6 +75,160 @@ struct StatusMenuTests {
         let unmappedMenu = controller.makeMenu()
         controller.menuWillOpen(unmappedMenu)
         #expect(controller.lastMenuProvider == .codex)
+    }
+
+    @Test
+    func menuOpenRefreshTriggersUserInitiatedThenBackground() async {
+        let oldMenuCards = StatusItemController.menuCardRenderingEnabled
+        let oldMenuRefresh = StatusItemController.menuRefreshEnabled
+        let oldDelay = StatusItemController._menuOpenRefreshDelayOverride
+        defer {
+            StatusItemController.menuCardRenderingEnabled = oldMenuCards
+            StatusItemController.menuRefreshEnabled = oldMenuRefresh
+            StatusItemController._menuOpenRefreshDelayOverride = oldDelay
+        }
+
+        StatusItemController.menuCardRenderingEnabled = false
+        StatusItemController.menuRefreshEnabled = true
+        // Give the immediate refresh task time to run so the delayed "stale/no snapshot" retry doesn't race it.
+        StatusItemController._menuOpenRefreshDelayOverride = .milliseconds(800)
+
+        let suite = "StatusMenuTests-MenuRefreshTriggers-\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suite) else {
+            Issue.record("Failed to create UserDefaults suite '\(suite)'")
+            return
+        }
+        defaults.removePersistentDomain(forName: suite)
+        // Avoid background provider-detection work during this test; it can schedule refreshes.
+        defaults.set(true, forKey: "providerDetectionCompleted")
+        let configStore = testConfigStore(suiteName: suite)
+        let settings = SettingsStore(
+            userDefaults: defaults,
+            configStore: configStore,
+            zaiTokenStore: NoopZaiTokenStore(),
+            syntheticTokenStore: NoopSyntheticTokenStore())
+        settings.statusChecksEnabled = false
+        settings.refreshFrequency = .manual
+        settings.mergeIcons = true
+        settings.providerDetectionCompleted = true
+        // Ensure menu-open refresh is user-initiated even when Claude isn't the visible provider.
+        settings.selectedMenuProvider = .codex
+
+        let registry = ProviderRegistry.shared
+        for provider in UsageProvider.allCases {
+            guard let meta = registry.metadata[provider] else { continue }
+            settings.setProviderEnabled(
+                provider: provider,
+                metadata: meta,
+                enabled: provider == .codex || provider == .claude)
+        }
+
+        let fetcher = UsageFetcher()
+
+        actor TriggerRecorder {
+            private var enabled = false
+            private var triggers: [ProviderFetchTrigger] = []
+            private var totalCalls = 0
+
+            func startRecording() {
+                self.enabled = true
+                self.triggers.removeAll()
+            }
+
+            func noteCall(_ trigger: ProviderFetchTrigger) {
+                self.totalCalls += 1
+                guard self.enabled else { return }
+                self.triggers.append(trigger)
+            }
+
+            func snapshot() -> [ProviderFetchTrigger] {
+                self.triggers
+            }
+
+            func total() -> Int {
+                self.totalCalls
+            }
+        }
+
+        let recorder = TriggerRecorder()
+
+        #if DEBUG
+        let override: @Sendable (Bool, ProviderFetchTrigger) async -> Void = { _, trigger in
+            await recorder.noteCall(trigger)
+        }
+
+        await UsageStore.$refreshOverrideForTesting.withValue(override) {
+            let store = UsageStore(
+                fetcher: fetcher,
+                browserDetection: BrowserDetection(cacheTTL: 0),
+                settings: settings)
+            let controller = StatusItemController(
+                store: store,
+                settings: settings,
+                account: fetcher.loadAccountInfo(),
+                updater: DisabledUpdaterController(),
+                preferencesSelection: PreferencesSelection(),
+                statusBar: self.makeStatusBarForTesting())
+
+            // UsageStore always schedules an initial background refresh from init.
+            // Wait for it to run before recording, so the first recorded trigger is menu-open userInitiated.
+            let initialDeadline = Date().addingTimeInterval(2.0)
+            while Date() < initialDeadline {
+                if await recorder.total() >= 1 { break }
+                try? await Task.sleep(for: .milliseconds(5))
+            }
+            let settleDeadline = Date().addingTimeInterval(2.0)
+            while store.isRefreshing, Date() < settleDeadline {
+                try? await Task.sleep(for: .milliseconds(5))
+            }
+
+            await recorder.startRecording()
+
+            // Force the "stale/no snapshot" condition so the delayed retry runs.
+            store._setSnapshotForTesting(nil, provider: .codex)
+            store._setErrorForTesting(nil, provider: .codex)
+
+            let menu = controller.makeMenu()
+            let baselineCount = await recorder.snapshot().count
+            controller.menuWillOpen(menu)
+
+            // First menu-open refresh must be user-initiated (even if other background refresh calls happen nearby).
+            let firstDeadline = Date().addingTimeInterval(2.0)
+            var userInitiatedIndex: Int?
+            while Date() < firstDeadline {
+                let snapshot = await recorder.snapshot()
+                let newTriggers = Array(snapshot.dropFirst(baselineCount))
+                if let index = newTriggers.firstIndex(of: .userInitiated) {
+                    userInitiatedIndex = index
+                    break
+                }
+                try? await Task.sleep(for: .milliseconds(10))
+            }
+            guard let userInitiatedIndex else {
+                let snapshot = await recorder.snapshot()
+                let newTriggers = Array(snapshot.dropFirst(baselineCount))
+                Issue.record("Expected a menu-open refresh call with trigger=userInitiated, got none.")
+                Issue.record("newTriggers=\(newTriggers)")
+                return
+            }
+
+            // If the delayed retry fires (stale/no snapshot), it must be background to avoid multiple prompts.
+            let secondDeadline = Date().addingTimeInterval(2.5)
+            while Date() < secondDeadline {
+                let snapshot = await recorder.snapshot()
+                let newTriggers = Array(snapshot.dropFirst(baselineCount))
+                if newTriggers.count >= userInitiatedIndex + 2 { break }
+                try? await Task.sleep(for: .milliseconds(10))
+            }
+            let maybeSecond = await recorder.snapshot()
+            let newTriggers = Array(maybeSecond.dropFirst(baselineCount))
+            if newTriggers.count >= userInitiatedIndex + 2 {
+                #expect(newTriggers[userInitiatedIndex + 1] == .background)
+            }
+        }
+        #else
+        Issue.record("Test requires DEBUG TaskLocal overrides")
+        #endif
     }
 
     @Test
@@ -286,11 +442,9 @@ struct StatusMenuTests {
         let menu = controller.makeMenu()
         controller.menuWillOpen(menu)
         let ids = menu.items.compactMap { $0.representedObject as? String }
-        let creditsIndex = ids.firstIndex(of: "menuCardCredits")
-        let costIndex = ids.firstIndex(of: "menuCardCost")
-        #expect(creditsIndex != nil)
-        #expect(costIndex != nil)
-        #expect(try #require(creditsIndex) < costIndex!)
+        let creditsIndex = try #require(ids.firstIndex(of: "menuCardCredits"))
+        let costIndex = try #require(ids.firstIndex(of: "menuCardCost"))
+        #expect(creditsIndex < costIndex)
     }
 
     @Test
