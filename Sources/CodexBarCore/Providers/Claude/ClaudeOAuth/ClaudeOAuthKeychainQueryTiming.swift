@@ -14,15 +14,18 @@ enum ClaudeOAuthKeychainQueryTiming {
     }
 
     static func backoffIfSlowNoUIQuery(_ durationMs: Double, _ service: String, _ log: CodexBarLogger) -> Bool {
+        // Intentionally no longer treats "slow" no-UI Keychain queries as a denial. Some systems can have
+        // non-deterministic timing characteristics that would make this backoff too aggressive and surprising.
+        //
+        // Keep this hook so call sites can cheaply log slow queries during debugging without changing behavior.
         guard ProviderInteractionContext.current == .background, durationMs > 1000 else { return false }
-        ClaudeOAuthKeychainAccessGate.recordDenied()
-        log.warning(
-            "Claude keychain no-UI query was slow; backing off",
+        log.debug(
+            "Claude keychain no-UI query was slow",
             metadata: [
                 "service": service,
                 "duration_ms": String(format: "%.2f", durationMs),
             ])
-        return true
+        return false
     }
 }
 #endif

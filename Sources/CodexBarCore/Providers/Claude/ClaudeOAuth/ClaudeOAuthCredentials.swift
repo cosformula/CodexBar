@@ -1278,20 +1278,6 @@ public enum ClaudeOAuthCredentialsStore {
         let startedAtNs = DispatchTime.now().uptimeNanoseconds
         let status = SecItemCopyMatching(query as CFDictionary, &result)
         let durationMs = Double(DispatchTime.now().uptimeNanoseconds - startedAtNs) / 1_000_000.0
-        if !allowKeychainPrompt,
-           ProviderInteractionContext.current == .background,
-           durationMs > 1000
-        {
-            // Some systems still show Keychain UI even when kSecUseAuthenticationUIFail is set.
-            // If a "non-interactive" read blocks for a noticeable duration, assume UI was involved and back off.
-            ClaudeOAuthKeychainAccessGate.recordDenied()
-            self.log.warning(
-                "Claude keychain non-interactive read was slow; backing off",
-                metadata: [
-                    "service": self.claudeKeychainService,
-                    "duration_ms": String(format: "%.2f", durationMs),
-                ])
-        }
         self.log.debug(
             "Claude keychain data read result",
             metadata: [
@@ -1350,18 +1336,6 @@ public enum ClaudeOAuthCredentialsStore {
         let startedAtNs = DispatchTime.now().uptimeNanoseconds
         let status = SecItemCopyMatching(query as CFDictionary, &result)
         let durationMs = Double(DispatchTime.now().uptimeNanoseconds - startedAtNs) / 1_000_000.0
-        if !allowKeychainPrompt,
-           ProviderInteractionContext.current == .background,
-           durationMs > 1000
-        {
-            ClaudeOAuthKeychainAccessGate.recordDenied()
-            self.log.warning(
-                "Claude keychain legacy non-interactive read was slow; backing off",
-                metadata: [
-                    "service": self.claudeKeychainService,
-                    "duration_ms": String(format: "%.2f", durationMs),
-                ])
-        }
         self.log.debug(
             "Claude keychain legacy data read result",
             metadata: [
