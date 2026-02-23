@@ -3,6 +3,14 @@ import SwiftUI
 @MainActor
 struct DisplayPane: View {
     @Bindable var settings: SettingsStore
+    private static let burnThresholdFormatter: NumberFormatter = {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        formatter.maximumFractionDigits = 0
+        formatter.minimum = 1
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        return formatter
+    }()
 
     var body: some View {
         ScrollView(.vertical, showsIndicators: true) {
@@ -56,6 +64,31 @@ struct DisplayPane: View {
 
                 Divider()
 
+                SettingsSection(contentSpacing: 10) {
+                    Text("Burn rate icon")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .textCase(.uppercase)
+                    PreferenceToggleRow(
+                        title: "Hide icon when idle",
+                        subtitle: "Hide the burn-rate flame when no tokens are being consumed.",
+                        binding: self.$settings.burnRateHideWhenIdle)
+                    self.burnThresholdRow(
+                        title: "Medium starts at",
+                        subtitle: "Low is any activity below this level.",
+                        value: self.$settings.burnRateMediumThreshold)
+                    self.burnThresholdRow(
+                        title: "High starts at",
+                        subtitle: "Medium runs until this threshold.",
+                        value: self.$settings.burnRateHighThreshold)
+                    self.burnThresholdRow(
+                        title: "Burning starts at",
+                        subtitle: "High runs until this threshold.",
+                        value: self.$settings.burnRateBurningThreshold)
+                }
+
+                Divider()
+
                 SettingsSection(contentSpacing: 12) {
                     Text("Menu content")
                         .font(.caption)
@@ -82,6 +115,28 @@ struct DisplayPane: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 20)
             .padding(.vertical, 12)
+        }
+    }
+
+    @ViewBuilder
+    private func burnThresholdRow(title: String, subtitle: String, value: Binding<Double>) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.body)
+                Text(subtitle)
+                    .font(.footnote)
+                    .foregroundStyle(.tertiary)
+            }
+            Spacer()
+            HStack(alignment: .center, spacing: 6) {
+                TextField("", value: value, formatter: Self.burnThresholdFormatter)
+                    .multilineTextAlignment(.trailing)
+                    .frame(width: 100)
+                Text("tok/min")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 }

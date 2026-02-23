@@ -21,6 +21,10 @@ extension SettingsStore {
         _ = self.costUsageEnabled
         _ = self.hidePersonalInfo
         _ = self.randomBlinkEnabled
+        _ = self.burnRateHideWhenIdle
+        _ = self.burnRateMediumThreshold
+        _ = self.burnRateHighThreshold
+        _ = self.burnRateBurningThreshold
         _ = self.claudeOAuthKeychainPromptMode
         _ = self.claudeOAuthKeychainReadStrategy
         _ = self.claudeWebExtrasEnabled

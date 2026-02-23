@@ -24,7 +24,8 @@ public struct CostUsageFetcher: Sendable {
         provider: UsageProvider,
         now: Date = Date(),
         forceRefresh: Bool = false,
-        allowVertexClaudeFallback: Bool = false) async throws -> CostUsageTokenSnapshot
+        allowVertexClaudeFallback: Bool = false,
+        refreshMinIntervalSeconds: TimeInterval? = nil) async throws -> CostUsageTokenSnapshot
     {
         guard provider == .codex || provider == .claude || provider == .vertexai else {
             throw CostUsageError.unsupportedProvider(provider)
@@ -39,6 +40,9 @@ public struct CostUsageFetcher: Sendable {
             options.claudeLogProviderFilter = allowVertexClaudeFallback ? .all : .vertexAIOnly
         } else if provider == .claude {
             options.claudeLogProviderFilter = .excludeVertexAI
+        }
+        if let refreshMinIntervalSeconds {
+            options.refreshMinIntervalSeconds = max(0, refreshMinIntervalSeconds)
         }
         if forceRefresh {
             options.refreshMinIntervalSeconds = 0

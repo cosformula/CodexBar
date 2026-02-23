@@ -688,20 +688,40 @@ extension UsageMenuCardView.Model {
     }
 
     private static func usageNotes(provider: UsageProvider, snapshot: UsageSnapshot?) -> [String] {
+        var notes: [String] = []
+
+        if provider == .codex, let burnRate = snapshot?.burnRate {
+            let tokenRate = UsageFormatter.tokenCountString(Int(burnRate.tokensPerMinute.rounded()))
+            notes.append("Burn rate: \(tokenRate)/min (\(burnRate.tier.label))")
+            if let costPerHour = Self.estimatedCodexCostPerHour(burnRate: burnRate) {
+                notes.append("Estimated cost: \(UsageFormatter.usdString(costPerHour))/hr")
+            }
+        }
+
         guard provider == .openrouter,
               let openRouter = snapshot?.openRouterUsage
         else {
-            return []
+            return notes
         }
 
         switch openRouter.keyQuotaStatus {
         case .available:
-            return []
+            return notes
         case .noLimitConfigured:
-            return ["No limit set for the API key"]
+            notes.append("No limit set for the API key")
+            return notes
         case .unavailable:
-            return ["API key limit unavailable right now"]
+            notes.append("API key limit unavailable right now")
+            return notes
         }
+    }
+
+    private static func estimatedCodexCostPerHour(burnRate: BurnRate) -> Double? {
+        let inputCostPerToken = 1.25e-6
+        let outputCostPerToken = 1e-5
+        let usdPerMinute = burnRate.inputRate * inputCostPerToken + burnRate.outputRate * outputCostPerToken
+        guard usdPerMinute > 0 else { return nil }
+        return usdPerMinute * 60
     }
 
     private static func email(

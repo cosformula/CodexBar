@@ -203,6 +203,20 @@ extension SettingsStore {
         let hidePersonalInfo = userDefaults.object(forKey: "hidePersonalInfo") as? Bool ?? false
         let randomBlinkEnabled = userDefaults.object(forKey: "randomBlinkEnabled") as? Bool ?? false
         let menuBarShowsHighestUsage = userDefaults.object(forKey: "menuBarShowsHighestUsage") as? Bool ?? false
+        let burnRateHideWhenIdle = userDefaults.object(forKey: "burnRateHideWhenIdle") as? Bool ?? false
+        let burnRateMediumThresholdDefault = BurnRateThresholds.default.medium
+        let burnRateHighThresholdDefault = BurnRateThresholds.default.high
+        let burnRateBurningThresholdDefault = BurnRateThresholds.default.burning
+        let burnRateMediumThreshold = userDefaults.object(forKey: "burnRateMediumThreshold") as? Double
+            ?? burnRateMediumThresholdDefault
+        let burnRateHighThreshold = userDefaults.object(forKey: "burnRateHighThreshold") as? Double
+            ?? burnRateHighThresholdDefault
+        let burnRateBurningThreshold = userDefaults.object(forKey: "burnRateBurningThreshold") as? Double
+            ?? burnRateBurningThresholdDefault
+        let burnThresholds = BurnRateThresholds(
+            medium: burnRateMediumThreshold,
+            high: burnRateHighThreshold,
+            burning: burnRateBurningThreshold)
         let claudeOAuthKeychainPromptModeRaw = userDefaults.string(forKey: "claudeOAuthKeychainPromptMode")
         let claudeOAuthKeychainReadStrategyRaw = userDefaults.string(forKey: "claudeOAuthKeychainReadStrategy")
         let claudeWebExtrasEnabledRaw = userDefaults.object(forKey: "claudeWebExtrasEnabled") as? Bool ?? false
@@ -239,6 +253,10 @@ extension SettingsStore {
             hidePersonalInfo: hidePersonalInfo,
             randomBlinkEnabled: randomBlinkEnabled,
             menuBarShowsHighestUsage: menuBarShowsHighestUsage,
+            burnRateHideWhenIdle: burnRateHideWhenIdle,
+            burnRateMediumThreshold: burnThresholds.medium,
+            burnRateHighThreshold: burnThresholds.high,
+            burnRateBurningThreshold: burnThresholds.burning,
             claudeOAuthKeychainPromptModeRaw: claudeOAuthKeychainPromptModeRaw,
             claudeOAuthKeychainReadStrategyRaw: claudeOAuthKeychainReadStrategyRaw,
             claudeWebExtrasEnabledRaw: claudeWebExtrasEnabledRaw,

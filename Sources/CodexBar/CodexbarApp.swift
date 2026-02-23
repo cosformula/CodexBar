@@ -253,6 +253,7 @@ private func makeUpdaterController() -> UpdaterProviding {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let updaterController: UpdaterProviding = makeUpdaterController()
     private var statusController: StatusItemControlling?
+    private var burnRateStatusController: BurnRateStatusItemController?
     private var store: UsageStore?
     private var settings: SettingsStore?
     private var account: AccountInfo?
@@ -305,15 +306,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func ensureStatusController() {
-        if self.statusController != nil { return }
+        if self.statusController != nil, self.burnRateStatusController != nil { return }
 
         if let store, let settings, let account, let selection = self.preferencesSelection {
-            self.statusController = StatusItemController.factory(
-                store,
-                settings,
-                account,
-                self.updaterController,
-                selection)
+            if self.statusController == nil {
+                self.statusController = StatusItemController.factory(
+                    store,
+                    settings,
+                    account,
+                    self.updaterController,
+                    selection)
+            }
+            if self.burnRateStatusController == nil {
+                self.burnRateStatusController = BurnRateStatusItemController(store: store, settings: settings)
+            }
             return
         }
 
@@ -326,11 +332,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let browserDetection = BrowserDetection(cacheTTL: BrowserDetection.defaultCacheTTL)
         let fallbackAccount = fetcher.loadAccountInfo()
         let fallbackStore = UsageStore(fetcher: fetcher, browserDetection: browserDetection, settings: fallbackSettings)
-        self.statusController = StatusItemController.factory(
-            fallbackStore,
-            fallbackSettings,
-            fallbackAccount,
-            self.updaterController,
-            PreferencesSelection())
+        if self.statusController == nil {
+            self.statusController = StatusItemController.factory(
+                fallbackStore,
+                fallbackSettings,
+                fallbackAccount,
+                self.updaterController,
+                PreferencesSelection())
+        }
+        if self.burnRateStatusController == nil {
+            self.burnRateStatusController = BurnRateStatusItemController(
+                store: fallbackStore,
+                settings: fallbackSettings)
+        }
     }
 }

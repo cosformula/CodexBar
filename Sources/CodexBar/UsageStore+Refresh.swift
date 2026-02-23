@@ -25,6 +25,7 @@ extension UsageStore {
                 self.statuses.removeValue(forKey: provider)
                 self.lastKnownSessionRemaining.removeValue(forKey: provider)
                 self.lastTokenFetchAt.removeValue(forKey: provider)
+                self.clearBurnRateState(for: provider)
             }
             return
         }
@@ -68,6 +69,7 @@ extension UsageStore {
                 self.failureGates[.claude]?.reset()
                 self.tokenFailureGates[.claude]?.reset()
                 self.lastTokenFetchAt.removeValue(forKey: .claude)
+                self.clearBurnRateState(for: .claude)
             }
         }
         await MainActor.run {
@@ -76,7 +78,9 @@ extension UsageStore {
 
         switch outcome.result {
         case let .success(result):
-            let scoped = result.usage.scoped(to: provider)
+            let scoped = result.usage
+                .scoped(to: provider)
+                .withBurnRate(self.burnRates[provider])
             await MainActor.run {
                 self.handleSessionQuotaTransition(provider: provider, snapshot: scoped)
                 self.snapshots[provider] = scoped

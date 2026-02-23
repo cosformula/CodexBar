@@ -19,6 +19,81 @@ public struct RateWindow: Codable, Equatable, Sendable {
     }
 }
 
+public struct BurnRateThresholds: Codable, Equatable, Sendable {
+    public static let `default` = BurnRateThresholds(
+        medium: 1000,
+        high: 10_000,
+        burning: 50_000)
+
+    public let medium: Double
+    public let high: Double
+    public let burning: Double
+
+    public init(medium: Double, high: Double, burning: Double) {
+        let normalizedMedium = max(1, medium)
+        let normalizedHigh = max(normalizedMedium + 1, high)
+        let normalizedBurning = max(normalizedHigh + 1, burning)
+        self.medium = normalizedMedium
+        self.high = normalizedHigh
+        self.burning = normalizedBurning
+    }
+}
+
+public enum BurnTier: String, Codable, CaseIterable, Sendable {
+    case idle
+    case low
+    case medium
+    case high
+    case burning
+
+    public static func tier(
+        for tokensPerMinute: Double,
+        thresholds: BurnRateThresholds = .default) -> BurnTier
+    {
+        let clamped = max(0, tokensPerMinute)
+        if clamped <= 0 { return .idle }
+        if clamped < thresholds.medium { return .low }
+        if clamped < thresholds.high { return .medium }
+        if clamped < thresholds.burning { return .high }
+        return .burning
+    }
+
+    public var label: String {
+        switch self {
+        case .idle: "Idle"
+        case .low: "Low"
+        case .medium: "Medium"
+        case .high: "High"
+        case .burning: "Burning"
+        }
+    }
+}
+
+public struct BurnRate: Codable, Equatable, Sendable {
+    public let tokensPerMinute: Double
+    public let inputRate: Double
+    public let outputRate: Double
+    public let tier: BurnTier
+    public let sampleInterval: TimeInterval
+    public let timestamp: Date
+
+    public init(
+        tokensPerMinute: Double,
+        inputRate: Double,
+        outputRate: Double,
+        tier: BurnTier,
+        sampleInterval: TimeInterval,
+        timestamp: Date)
+    {
+        self.tokensPerMinute = max(0, tokensPerMinute)
+        self.inputRate = max(0, inputRate)
+        self.outputRate = max(0, outputRate)
+        self.tier = tier
+        self.sampleInterval = max(0, sampleInterval)
+        self.timestamp = timestamp
+    }
+}
+
 public struct ProviderIdentitySnapshot: Codable, Sendable {
     public let providerID: UsageProvider?
     public let accountEmail: String?
@@ -51,6 +126,7 @@ public struct UsageSnapshot: Codable, Sendable {
     public let primary: RateWindow?
     public let secondary: RateWindow?
     public let tertiary: RateWindow?
+    public let burnRate: BurnRate?
     public let providerCost: ProviderCostSnapshot?
     public let zaiUsage: ZaiUsageSnapshot?
     public let minimaxUsage: MiniMaxUsageSnapshot?
@@ -63,6 +139,7 @@ public struct UsageSnapshot: Codable, Sendable {
         case primary
         case secondary
         case tertiary
+        case burnRate
         case providerCost
         case openRouterUsage
         case updatedAt
@@ -76,6 +153,7 @@ public struct UsageSnapshot: Codable, Sendable {
         primary: RateWindow?,
         secondary: RateWindow?,
         tertiary: RateWindow? = nil,
+        burnRate: BurnRate? = nil,
         providerCost: ProviderCostSnapshot? = nil,
         zaiUsage: ZaiUsageSnapshot? = nil,
         minimaxUsage: MiniMaxUsageSnapshot? = nil,
@@ -87,6 +165,7 @@ public struct UsageSnapshot: Codable, Sendable {
         self.primary = primary
         self.secondary = secondary
         self.tertiary = tertiary
+        self.burnRate = burnRate
         self.providerCost = providerCost
         self.zaiUsage = zaiUsage
         self.minimaxUsage = minimaxUsage
@@ -101,6 +180,7 @@ public struct UsageSnapshot: Codable, Sendable {
         self.primary = try container.decodeIfPresent(RateWindow.self, forKey: .primary)
         self.secondary = try container.decodeIfPresent(RateWindow.self, forKey: .secondary)
         self.tertiary = try container.decodeIfPresent(RateWindow.self, forKey: .tertiary)
+        self.burnRate = try container.decodeIfPresent(BurnRate.self, forKey: .burnRate)
         self.providerCost = try container.decodeIfPresent(ProviderCostSnapshot.self, forKey: .providerCost)
         self.zaiUsage = nil // Not persisted, fetched fresh each time
         self.minimaxUsage = nil // Not persisted, fetched fresh each time
@@ -131,6 +211,7 @@ public struct UsageSnapshot: Codable, Sendable {
         try container.encode(self.primary, forKey: .primary)
         try container.encode(self.secondary, forKey: .secondary)
         try container.encode(self.tertiary, forKey: .tertiary)
+        try container.encodeIfPresent(self.burnRate, forKey: .burnRate)
         try container.encodeIfPresent(self.providerCost, forKey: .providerCost)
         try container.encodeIfPresent(self.openRouterUsage, forKey: .openRouterUsage)
         try container.encode(self.updatedAt, forKey: .updatedAt)
@@ -184,6 +265,7 @@ public struct UsageSnapshot: Codable, Sendable {
             primary: self.primary,
             secondary: self.secondary,
             tertiary: self.tertiary,
+            burnRate: self.burnRate,
             providerCost: self.providerCost,
             zaiUsage: self.zaiUsage,
             minimaxUsage: self.minimaxUsage,
@@ -191,6 +273,21 @@ public struct UsageSnapshot: Codable, Sendable {
             cursorRequests: self.cursorRequests,
             updatedAt: self.updatedAt,
             identity: identity)
+    }
+
+    public func withBurnRate(_ burnRate: BurnRate?) -> UsageSnapshot {
+        UsageSnapshot(
+            primary: self.primary,
+            secondary: self.secondary,
+            tertiary: self.tertiary,
+            burnRate: burnRate,
+            providerCost: self.providerCost,
+            zaiUsage: self.zaiUsage,
+            minimaxUsage: self.minimaxUsage,
+            openRouterUsage: self.openRouterUsage,
+            cursorRequests: self.cursorRequests,
+            updatedAt: self.updatedAt,
+            identity: self.identity)
     }
 
     public func scoped(to provider: UsageProvider) -> UsageSnapshot {

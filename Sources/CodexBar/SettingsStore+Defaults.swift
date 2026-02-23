@@ -188,6 +188,51 @@ extension SettingsStore {
         }
     }
 
+    var burnRateHideWhenIdle: Bool {
+        get { self.defaultsState.burnRateHideWhenIdle }
+        set {
+            self.defaultsState.burnRateHideWhenIdle = newValue
+            self.userDefaults.set(newValue, forKey: "burnRateHideWhenIdle")
+        }
+    }
+
+    var burnRateMediumThreshold: Double {
+        get { self.defaultsState.burnRateMediumThreshold }
+        set {
+            self.setBurnRateThresholds(
+                medium: newValue,
+                high: self.defaultsState.burnRateHighThreshold,
+                burning: self.defaultsState.burnRateBurningThreshold)
+        }
+    }
+
+    var burnRateHighThreshold: Double {
+        get { self.defaultsState.burnRateHighThreshold }
+        set {
+            self.setBurnRateThresholds(
+                medium: self.defaultsState.burnRateMediumThreshold,
+                high: newValue,
+                burning: self.defaultsState.burnRateBurningThreshold)
+        }
+    }
+
+    var burnRateBurningThreshold: Double {
+        get { self.defaultsState.burnRateBurningThreshold }
+        set {
+            self.setBurnRateThresholds(
+                medium: self.defaultsState.burnRateMediumThreshold,
+                high: self.defaultsState.burnRateHighThreshold,
+                burning: newValue)
+        }
+    }
+
+    var burnRateThresholds: BurnRateThresholds {
+        BurnRateThresholds(
+            medium: self.defaultsState.burnRateMediumThreshold,
+            high: self.defaultsState.burnRateHighThreshold,
+            burning: self.defaultsState.burnRateBurningThreshold)
+    }
+
     var claudeOAuthKeychainPromptMode: ClaudeOAuthKeychainPromptMode {
         get {
             let raw = self.defaultsState.claudeOAuthKeychainPromptModeRaw
@@ -308,5 +353,15 @@ extension SettingsStore {
     var debugLoadingPattern: LoadingPattern? {
         get { self.debugLoadingPatternRaw.flatMap(LoadingPattern.init(rawValue:)) }
         set { self.debugLoadingPatternRaw = newValue?.rawValue }
+    }
+
+    private func setBurnRateThresholds(medium: Double, high: Double, burning: Double) {
+        let normalized = BurnRateThresholds(medium: medium, high: high, burning: burning)
+        self.defaultsState.burnRateMediumThreshold = normalized.medium
+        self.defaultsState.burnRateHighThreshold = normalized.high
+        self.defaultsState.burnRateBurningThreshold = normalized.burning
+        self.userDefaults.set(normalized.medium, forKey: "burnRateMediumThreshold")
+        self.userDefaults.set(normalized.high, forKey: "burnRateHighThreshold")
+        self.userDefaults.set(normalized.burning, forKey: "burnRateBurningThreshold")
     }
 }

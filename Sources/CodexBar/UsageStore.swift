@@ -16,6 +16,8 @@ extension UsageStore {
         _ = self.accountSnapshots
         _ = self.tokenSnapshots
         _ = self.tokenErrors
+        _ = self.burnRates
+        _ = self.burnCostRatesUSDPerHour
         _ = self.tokenRefreshInFlight
         _ = self.credits
         _ = self.lastCreditsError
@@ -51,11 +53,16 @@ extension UsageStore {
             _ = self.settings.selectedMenuProvider
             _ = self.settings.debugLoadingPattern
             _ = self.settings.debugKeepCLISessionsAlive
+            _ = self.settings.burnRateMediumThreshold
+            _ = self.settings.burnRateHighThreshold
+            _ = self.settings.burnRateBurningThreshold
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.observeSettingsChanges()
                 self.startTimer()
+                self.startBurnRateTimer()
+                self.refreshBurnRateTierMappings()
                 self.updateProviderRuntimes()
                 await self.refresh()
             }
@@ -146,6 +153,8 @@ final class UsageStore {
     var accountSnapshots: [UsageProvider: [TokenAccountUsageSnapshot]] = [:]
     var tokenSnapshots: [UsageProvider: CostUsageTokenSnapshot] = [:]
     var tokenErrors: [UsageProvider: String] = [:]
+    var burnRates: [UsageProvider: BurnRate] = [:]
+    var burnCostRatesUSDPerHour: [UsageProvider: Double] = [:]
     var tokenRefreshInFlight: Set<UsageProvider> = []
     var credits: CreditsSnapshot?
     var lastCreditsError: String?
@@ -171,7 +180,7 @@ final class UsageStore {
 
     @ObservationIgnored let codexFetcher: UsageFetcher
     @ObservationIgnored let claudeFetcher: any ClaudeUsageFetching
-    @ObservationIgnored private let costUsageFetcher: CostUsageFetcher
+    @ObservationIgnored let costUsageFetcher: CostUsageFetcher
     @ObservationIgnored let browserDetection: BrowserDetection
     @ObservationIgnored private let registry: ProviderRegistry
     @ObservationIgnored let settings: SettingsStore
@@ -189,13 +198,18 @@ final class UsageStore {
     @ObservationIgnored var providerRuntimes: [UsageProvider: any ProviderRuntime] = [:]
     @ObservationIgnored private var timerTask: Task<Void, Never>?
     @ObservationIgnored private var tokenTimerTask: Task<Void, Never>?
+    @ObservationIgnored private var burnRateTimerTask: Task<Void, Never>?
     @ObservationIgnored private var tokenRefreshSequenceTask: Task<Void, Never>?
     @ObservationIgnored private var pathDebugRefreshTask: Task<Void, Never>?
+    @ObservationIgnored var burnRateSamples: [UsageProvider: [BurnRateSample]] = [:]
+    @ObservationIgnored var burnRateRefreshInFlight: Set<UsageProvider> = []
     @ObservationIgnored var lastKnownSessionRemaining: [UsageProvider: Double] = [:]
     @ObservationIgnored var lastTokenFetchAt: [UsageProvider: Date] = [:]
     @ObservationIgnored private var hasCompletedInitialRefresh: Bool = false
     @ObservationIgnored private let tokenFetchTTL: TimeInterval = 60 * 60
     @ObservationIgnored private let tokenFetchTimeout: TimeInterval = 10 * 60
+    @ObservationIgnored let burnRateSamplingInterval: TimeInterval = 12
+    @ObservationIgnored let burnRateWindowInterval: TimeInterval = 60
 
     init(
         fetcher: UsageFetcher,
@@ -251,6 +265,7 @@ final class UsageStore {
         Task { await self.refresh() }
         self.startTimer()
         self.startTokenTimer()
+        self.startBurnRateTimer()
     }
 
     /// Returns the login method (plan type) for the specified provider, if available.
@@ -510,6 +525,18 @@ final class UsageStore {
         }
     }
 
+    private func startBurnRateTimer() {
+        self.burnRateTimerTask?.cancel()
+        Task { await self.refreshBurnRates() }
+        let wait = self.burnRateSamplingInterval
+        self.burnRateTimerTask = Task.detached(priority: .utility) { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(wait))
+                await self?.refreshBurnRates()
+            }
+        }
+    }
+
     private func scheduleTokenRefresh(force: Bool) {
         if force {
             self.tokenRefreshSequenceTask?.cancel()
@@ -535,6 +562,7 @@ final class UsageStore {
     deinit {
         self.timerTask?.cancel()
         self.tokenTimerTask?.cancel()
+        self.burnRateTimerTask?.cancel()
         self.tokenRefreshSequenceTask?.cancel()
     }
 
@@ -692,7 +720,7 @@ extension UsageStore {
             if self.snapshots[.codex] == nil,
                let usage = dash.toUsageSnapshot(provider: .codex, accountEmail: targetEmail)
             {
-                self.snapshots[.codex] = usage
+                self.snapshots[.codex] = usage.withBurnRate(self.burnRates[.codex])
                 self.errors[.codex] = nil
                 self.failureGates[.codex]?.recordSuccess()
                 self.lastSourceLabels[.codex] = "openai-web"
@@ -1546,6 +1574,9 @@ extension UsageStore {
         self.lastTokenFetchAt.removeAll()
         self.tokenFailureGates[.codex]?.reset()
         self.tokenFailureGates[.claude]?.reset()
+        self.clearBurnRateState(for: .codex)
+        self.clearBurnRateState(for: .claude)
+        self.clearBurnRateState(for: .vertexai)
         return nil
     }
 

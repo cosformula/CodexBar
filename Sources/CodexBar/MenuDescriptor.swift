@@ -172,6 +172,10 @@ struct MenuDescriptor {
                     entries.append(.text("Quota: \(used) / \(limit)", .primary))
                 }
             }
+
+            if let burnRate = snap.burnRate ?? store.burnRate(for: provider) {
+                Self.appendBurnRate(entries: &entries, provider: provider, burnRate: burnRate, store: store)
+            }
         } else {
             entries.append(.text("No usage yet", .secondary))
         }
@@ -387,6 +391,20 @@ struct MenuDescriptor {
         guard let match = regex.firstMatch(in: raw, options: [], range: range),
               let r = Range(match.range, in: raw) else { return nil }
         return String(raw[r])
+    }
+
+    private static func appendBurnRate(
+        entries: inout [Entry],
+        provider: UsageProvider,
+        burnRate: BurnRate,
+        store: UsageStore)
+    {
+        let tokenRate = UsageFormatter.tokenCountString(Int(burnRate.tokensPerMinute.rounded()))
+        entries.append(.text("Burn rate: \(tokenRate)/min (\(burnRate.tier.label))", .primary))
+
+        if let usdPerHour = store.estimatedBurnCostRateUSDPerHour(for: provider, burnRate: burnRate) {
+            entries.append(.text("Estimated cost: \(UsageFormatter.usdString(usdPerHour))/hr", .secondary))
+        }
     }
 }
 
